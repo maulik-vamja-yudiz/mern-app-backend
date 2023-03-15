@@ -1,4 +1,5 @@
 const HttpError = require("../models/http-error.js");
+const fs = require("fs");
 const { validationResult } = require("express-validator");
 const { v4: uuid } = require("uuid");
 const getCoordinatesForAddress = require("../util/location");
@@ -40,17 +41,19 @@ const getPlacesByUserId = async (req, res, next) => {
     } catch (error) {
         return next(new HttpError("Something went wrong", 500));
     }
-    if (!userPlaces || userPlaces.places.length == 0) {
-        return next(
-            new HttpError("could not find place for the user " + userId, 404)
-        );
-    }
+    // if (!userPlaces || userPlaces.places.length == 0) {
+    //     return next(
+    //         new HttpError("could not find place for the user " + userId, 404)
+    //     );
+    // }
     // 2 rite error throw thai banne function ma alag alag way use karelo che
     // error throw no use karine and biju next() method ma error pass kari ne
     res.json({
-        places: userPlaces.places.map((place) =>
-            place.toObject({ getters: true })
-        ),
+        places: userPlaces
+            ? userPlaces.places.map((place) =>
+                  place.toObject({ getters: true })
+              )
+            : [],
     });
 };
 
@@ -74,7 +77,7 @@ const createPlace = async (req, res, next) => {
     const createdPlace = new Place({
         title,
         description,
-        image: "https://lh5.googleusercontent.com/p/AF1QipNVlM5lo7fIJrmvjN4EOrTMiQjDgDyTfw7ATdV6=w408-h272-k-no",
+        image: req.file.path,
         address,
         location: coordinates,
         creator,
@@ -122,6 +125,10 @@ const updatePlace = async (req, res, next) => {
         return next(new HttpError("Something went wrong", 500));
     }
 
+    if (updatable_place.creator.toString() !== req.userData.userId) {
+        //creator property is not an normal json property, it is the refrenced object id of the users. we need to convert it to the string first.
+        return next(new HttpError("You can not access this resource", 401));
+    }
     updatable_place.title = title;
     updatable_place.description = description;
     try {
@@ -137,11 +144,13 @@ const updatePlace = async (req, res, next) => {
         message: "Place is updated SuccessFully",
     });
 };
+
 const deletePlace = async (req, res, next) => {
     const placeId = req.params.placeId;
     let isPlaceExists;
     try {
         isPlaceExists = await Place.findById(placeId).populate("creator");
+        //populate() method will give proper object of the user. Same like (with eloquent method)
     } catch (error) {
         return next(
             new HttpError(
@@ -154,7 +163,11 @@ const deletePlace = async (req, res, next) => {
         return next(
             new HttpError("Data is not available for this placeId", 404)
         );
-
+    if (isPlaceExists.creator.id !== req.userData.userId) {
+        return next(new HttpError("You can not access this resource", 401));
+    }
+    const imagePath = isPlaceExists.image;
+    console.log(imagePath);
     try {
         // DB Transaction
         const dbSession = await mongoose.startSession();
@@ -162,10 +175,12 @@ const deletePlace = async (req, res, next) => {
         await isPlaceExists.remove({ session: dbSession });
         isPlaceExists.creator.places.pull(isPlaceExists);
         await isPlaceExists.creator.save({ session: dbSession });
+
         await dbSession.commitTransaction();
     } catch (error) {
         return next(new HttpError(error, 500));
     }
+    fs.unlink(imagePath, (err) => console.log(err));
     res.status(200).json({ message: "Place Deleted successfully" });
 };
 

@@ -1,6 +1,8 @@
 const HttpError = require("../models/http-error");
 const { validationResult } = require("express-validator");
 const User = require("../models/User");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 
 const getUsers = async (req, res, next) => {
     let users;
@@ -19,7 +21,6 @@ const getUsers = async (req, res, next) => {
     });
 };
 const signup = async (req, res, next) => {
-    console.log(req.body);
     const validate = validationResult(req);
     if (!validate.isEmpty()) {
         return next(
@@ -41,19 +42,39 @@ const signup = async (req, res, next) => {
             new HttpError("This email is already exist. Try to Login", 422)
         );
     let createdUser;
+    let hashedPassword;
+    try {
+        hashedPassword = await bcrypt.hash(password, 12);
+    } catch (error) {
+        return next(new HttpError("Error storing User", 500));
+    }
     try {
         createdUser = await User.create({
             name,
             email,
-            password,
-            image: "sbjdkjbvksbvasdbvkjjsad.jpg",
+            password: hashedPassword,
+            image: req.file.path,
             places: [],
         });
     } catch (error) {
         return next(new HttpError(error, 500));
     }
 
-    res.status(200).json({ user: createdUser.toObject({ getters: true }) });
+    let token;
+    try {
+        token = jwt.sign(
+            { userId: createdUser.id, email: createdUser.email },
+            "authentication_web_token",
+            { expiresIn: "1h" }
+        );
+    } catch (error) {
+        return next(new HttpError("Error in token creation", 500));
+    }
+
+    res.status(200).json({
+        user: createdUser.toObject({ getters: true }),
+        token,
+    });
 };
 const login = async (req, res, next) => {
     const { email, password } = req.body;
@@ -67,11 +88,35 @@ const login = async (req, res, next) => {
     }
     if (!user) return next(new HttpError("Provide valid email address", 401));
 
-    if (user.password !== password)
+    let isValidPassword = false;
+    try {
+        isValidPassword = await bcrypt.compare(password, user.password);
+    } catch (error) {
+        return next(
+            new HttpError(
+                "Password is incorrect, Please enter Correct Password",
+                500
+            )
+        );
+    }
+
+    if (!isValidPassword)
         return next(new HttpError("Password is incorrect", 401));
+
+    let token;
+    try {
+        token = jwt.sign(
+            { userId: user.id, email: user.email },
+            "authentication_web_token",
+            { expiresIn: "1h" }
+        );
+    } catch (error) {
+        return next(new HttpError("Error in token creation", 500));
+    }
 
     res.status(200).json({
         user: user.toObject({ getters: true }),
+        token,
         message: "Succesfully Logged In",
     });
 };
